@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/credit_card.dart';
 import '../services/motion_tracking_service.dart';
 import 'card_widget.dart';
-import 'transaction_list_view.dart';
-import 'spending_analytics_view.dart';
+import 'card_detail_screen.dart';
 
 class CardListScreen extends StatefulWidget {
   final List<CreditCard> cards;
@@ -22,11 +21,9 @@ class CardListScreen extends StatefulWidget {
 class _CardListScreenState extends State<CardListScreen>
     with TickerProviderStateMixin {
   late AnimationController _expansionController;
-  late AnimationController _detailController;
   late MotionTrackingService _motionTrackingService;
 
   CardViewState _viewState = CardViewState.collapsed;
-  int? _selectedCardIndex;
 
   // Device motion driven parallax effect
   double _tiltX = 0.0;
@@ -39,10 +36,13 @@ class _CardListScreenState extends State<CardListScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
-    _detailController = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 1350),
-    );
+
+    // Add listener to rebuild during animation for smooth scroll effect
+    _expansionController.addListener(() {
+      setState(() {
+        // Rebuild to animate card positions smoothly
+      });
+    });
 
     // Initialize motion tracking service
     _motionTrackingService = MotionTrackingService(
@@ -66,14 +66,11 @@ class _CardListScreenState extends State<CardListScreen>
   @override
   void dispose() {
     _expansionController.dispose();
-    _detailController.dispose();
     _motionTrackingService.dispose();
     super.dispose();
   }
 
   void _handleVerticalDrag(DragUpdateDetails details) {
-    if (_viewState == CardViewState.detail) return;
-
     setState(() {
       // More sensitive drag - lower divisor = more responsive
       _expansionController.value =
@@ -85,8 +82,6 @@ class _CardListScreenState extends State<CardListScreen>
   }
 
   void _handleDragEnd(DragEndDetails details) {
-    if (_viewState == CardViewState.detail) return;
-
     final velocity = details.primaryVelocity ?? 0;
     final shouldExpand = _expansionController.value > 0.3 || velocity > 200;
 
@@ -101,24 +96,34 @@ class _CardListScreenState extends State<CardListScreen>
 
   void _handleCardTap(int index) {
     if (_viewState == CardViewState.collapsed) {
-      _expansionController.animateTo(1.0, curve: Curves.easeOut);
+      // Trigger smooth auto-scroll animation when tapped
       setState(() => _viewState = CardViewState.expanded);
+      _expansionController.animateTo(
+        1.0,
+        duration: const Duration(milliseconds: 1200),
+        curve: Curves.easeInOutCubic,
+      );
     } else if (_viewState == CardViewState.expanded) {
-      setState(() {
-        _selectedCardIndex = index;
-        _viewState = CardViewState.detail;
-      });
-      _detailController.forward();
+      // Navigate to detail screen with Hero animation
+      final card = widget.cards[index];
+      Navigator.of(context).push(
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) =>
+              CardDetailScreen(
+            card: card,
+            transactions: widget.transactions,
+          ),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            // Fade transition along with Hero animation
+            return FadeTransition(
+              opacity: animation,
+              child: child,
+            );
+          },
+          transitionDuration: const Duration(milliseconds: 500),
+        ),
+      );
     }
-  }
-
-  void _handleBackFromDetail() {
-    _detailController.reverse().then((_) {
-      setState(() {
-        _selectedCardIndex = null;
-        _viewState = CardViewState.expanded;
-      });
-    });
   }
 
   @override
@@ -132,7 +137,6 @@ class _CardListScreenState extends State<CardListScreen>
           child: Stack(
             children: [
               ..._buildCardStack(),
-              if (_viewState == CardViewState.detail) _buildDetailView(),
             ],
           ),
         ),
@@ -151,15 +155,6 @@ class _CardListScreenState extends State<CardListScreen>
   Widget _buildAnimatedCard(int index) {
     final card = widget.cards[index];
     final progress = _expansionController.value;
-    final isSelected = _selectedCardIndex == index;
-    final shouldHide = _selectedCardIndex != null && !isSelected;
-
-    // Apply device motion driven parallax effect to the selected card
-    final parallaxX = isSelected ? _tiltX * 18.0 : 0.0; // X offset
-    final parallaxY = isSelected ? _tiltY * 18.0 : 0.0; // Y offset
-    final parallaxRotateX = isSelected ? _tiltY * 0.35 : 0.0; // Tilt forward/back
-    final parallaxRotateY = isSelected ? -_tiltX * 0.35 : 0.0; // Tilt left/right
-    final parallaxRotateZ = isSelected ? _tiltX * 0.08 : 0.0; // Subtle twist
 
     const double baseTop = 300.0;
 
@@ -194,22 +189,29 @@ class _CardListScreenState extends State<CardListScreen>
     final dynamicElevation = baseElevation + (progress * cardDepthFactor * 2.0);
 
     return Positioned(
-      top: isSelected
-          ? 70.0 + parallaxY
-          : baseTop + currentYOffset - rotationCompensation,
-      left: isSelected ? 20 + parallaxX : 20,
-      right: isSelected ? 20 - parallaxX : 20,
-      child: AnimatedOpacity(
-        duration: const Duration(milliseconds: 250),
-        opacity: shouldHide ? 0.0 : 1.0,
+      top: baseTop + currentYOffset - rotationCompensation,
+      left: 20,
+      right: 20,
+      child: Hero(
+        tag: 'card_${card.id}',
+        flightShuttleBuilder: (
+          BuildContext flightContext,
+          Animation<double> animation,
+          HeroFlightDirection flightDirection,
+          BuildContext fromHeroContext,
+          BuildContext toHeroContext,
+        ) {
+          // Smooth Hero transition between screens
+          return DefaultTextStyle(
+            style: DefaultTextStyle.of(toHeroContext).style,
+            child: toHeroContext.widget,
+          );
+        },
         child: Transform(
           alignment: Alignment.center,
-          // Apply parallax rotation when selected, otherwise normal card rotation
           transform: Matrix4.identity()
-            ..setEntry(3, 2, isSelected ? 0.0015 : 0.001)
-            ..rotateY(isSelected ? parallaxRotateY : 0.0)
-            ..rotateX(isSelected ? parallaxRotateX : rotationX)
-            ..rotateZ(isSelected ? parallaxRotateZ : 0.0),
+            ..setEntry(3, 2, 0.001)
+            ..rotateX(rotationX),
           child: GestureDetector(
             onTap: () => _handleCardTap(index),
             child: AnimatedContainer(
@@ -242,37 +244,13 @@ class _CardListScreenState extends State<CardListScreen>
               ),
               child: CardWidget(
                 card: card,
-                elevation: isSelected ? 28.0 : dynamicElevation,
-                motionOffset: isSelected ? Offset(_tiltX, _tiltY) : Offset.zero,
-                showDepth: isSelected,
+                elevation: dynamicElevation,
+                motionOffset: Offset.zero,
+                showDepth: false,
               ),
             ),
           ),
         ),
-      ),
-    );
-  }
-
-  Widget _buildDetailView() {
-    final card = widget.cards[_selectedCardIndex!];
-    final offset = Offset(0, 600 * (1 - _detailController.value));
-
-    return Positioned.fill(
-      child: Column(
-        children: [
-          const SizedBox(height: 280),
-          Expanded(
-            child: Transform.translate(
-              offset: offset,
-              child: card.hasSpendingAnalytics
-                  ? SpendingAnalyticsView(onClose: _handleBackFromDetail)
-                  : TransactionListView(
-                      transactions: widget.transactions,
-                      onClose: _handleBackFromDetail,
-                    ),
-            ),
-          ),
-        ],
       ),
     );
   }

@@ -35,8 +35,9 @@ class CardWidget extends StatelessWidget {
       saturation: -0.03,
     );
 
-    final Offset contentDrift = Offset(dx * 8.0, dy * 6.0);
-    final Offset ribbonDrift = Offset(dx * -12.0, dy * -9.0);
+    // Subtle iOS-like content drift (reduced sensitivity)
+    final Offset contentDrift = Offset(dx * 4.0, dy * 3.0);
+    final Offset ribbonDrift = Offset(dx * -6.0, dy * -4.5);
 
     return Container(
       height: 200,
